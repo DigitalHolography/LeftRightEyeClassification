@@ -1,8 +1,15 @@
 # Python 3.12 recommended.
+# PyTorch with CUDA
+--extra-index-url https://download.pytorch.org/whl/cu130
+torch
+torchvision
+
 # Direct dependencies imported by the notebooks.
 ultralytics
 opencv-python
 numpy
+pandas
+scikit-learn
 matplotlib
 tqdm
 

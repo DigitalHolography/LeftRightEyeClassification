@@ -7,6 +7,7 @@ runs/
 models/
 new_images/
 same/
+csv/
 
 *.png
 
