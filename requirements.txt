@@ -12,6 +12,7 @@ pandas
 scikit-learn
 matplotlib
 tqdm
+pillow
 
 # Notebook interface and Python kernel.
 jupyterlab
