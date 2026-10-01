@@ -5,6 +5,7 @@ data/
 datasets/
 runs/
 models/
+splits_out/
 new_images/
 same/
 csv/
