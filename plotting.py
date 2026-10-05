@@ -1,3 +1,16 @@
+import base64
+import html
+import io
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from PIL import Image
+from sklearn.metrics import precision_recall_fscore_support
+from ultralytics import YOLO
+
+
 def plot_kfold_report(
     histories,
     scores,
@@ -100,15 +113,7 @@ def plot_kfold_report(
     return fig
 
 
-def add_fig_to_report(fig, titre="", path="report.html"):
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", bbox_inches="tight")
-    img = base64.b64encode(buf.getvalue()).decode()
-    with open(path, "a", encoding="utf-8") as f:
-        f.write(f'<h2>{titre}</h2>\n<img src="data:image/png;base64,{img}"><br>\n')
-
-
-def html_text(texte: str) -> str:
+def _html_text(texte: str) -> str:
     paragraphes = [p.strip() for p in texte.strip().split("\n\n") if p.strip()]
     return "\n".join(
         f"<p>{html.escape(p).replace(chr(10), '<br>')}</p>" for p in paragraphes
@@ -122,10 +127,18 @@ def add_text_to_report(
         if title:
             f.write(f"<h{level}>{html.escape(title)}</h{level}>\n")
         if text:
-            f.write(html_text(text) + "\n")
+            f.write(_html_text(text) + "\n")
 
 
-def macro_scores(m):
+def add_fig_to_report(fig, titre="", path="report.html"):
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", bbox_inches="tight")
+    img = base64.b64encode(buf.getvalue()).decode()
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(f'<h2>{titre}</h2>\n<img src="data:image/png;base64,{img}"><br>\n')
+
+
+def _macro_scores(m):
     cm = m.confusion_matrix.matrix.T.astype(int)
     idx = np.arange(cm.shape[0])
     y_true = np.repeat(idx, cm.sum(axis=1))
@@ -145,7 +158,7 @@ def plot_metrics(results, model_names: list[str], ncols: int = 3):
 
     metric_names = ["top1", "top5", "precision", "recall", "F1"]
     M = np.array(
-        [[m.top1, m.top5, *macro_scores(m)] for m in results]
+        [[m.top1, m.top5, *_macro_scores(m)] for m in results]
     )  # (modèles, métriques)
 
     n_metrics = len(metric_names)
@@ -183,7 +196,7 @@ def plot_metrics(results, model_names: list[str], ncols: int = 3):
     plt.show()
 
 
-def plt_layer_cam(model: YOLO, data: str, class_name: str):
+def plot_LayerCAM(model: YOLO, data: str, class_name: str):
 
     predict_folder = f"predict_LayerCAM_{class_name}"
     path_prediction = Path("runs", "classify", predict_folder)
@@ -202,19 +215,16 @@ def plt_layer_cam(model: YOLO, data: str, class_name: str):
             continue
 
         # skip wrong result
-        print(model.names[r.probs.top1])
-        print(class_name)
         if model.names[r.probs.top1] != class_name:
             continue
 
         lst.append(np.asarray(Image.open(path)))
 
     n_image = len(lst)
-    print(n_image)
     n_cols = 3
     n_rows = n_image // n_cols
 
-    fig, axes = plt.subplots(
+    _, axes = plt.subplots(
         n_rows, n_cols, figsize=(4 * n_cols, 4 * n_rows), squeeze=False
     )
 

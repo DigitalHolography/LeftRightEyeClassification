@@ -1,3 +1,7 @@
+import numpy as np
+from ultralytics import YOLO
+
+
 def train(model_name: str, dataset_path: str, config: dict):
 
     model = YOLO(config["model"])
@@ -35,6 +39,7 @@ def test(model, dataset_path: str):
 
     names = [model.names[i] for i in range(len(model.names))]
 
+    # Log
     for i, name in enumerate(names):
         print(
             f"{name:>10} | accuracy {accuracy[i]:.3f} | recall {recall[i]:.3f} | F1 {f1[i]:.3f}"

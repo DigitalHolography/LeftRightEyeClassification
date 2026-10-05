@@ -7,6 +7,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+"""
+TODO: Review if needed, it's actual unused code
+"""
+
 
 def _fill_partition(images: list[str], output_file: str, subdataset: np.ndarray[str]):
 
@@ -40,38 +44,6 @@ def _log_subject_eye(train, valid, test):
     s += f"total : subject {total_subject}, eye {total_eyes}\n"
 
     print(s)
-
-
-def split_dataset_source(
-    csv: str,
-    output_dir: str,
-    ratio_train=0.70,
-    ratio_valid=0.15,
-    ratio_test=0.15,
-    margin_train=0.05,
-    margin_test=0.02,
-):
-
-    if not Path(csv).exists():
-        return
-
-    df = pd.read_csv(csv)
-
-    with open(dataset, "r") as file:
-        images = file.readlines()
-
-        hist = histogram_subject(images)
-
-        train, valid, test = _repeated_weighted_draw(
-            hist, ratio_train, ratio_test, margin_train, margin_test
-        )
-
-        _log_subject_eye(train, valid, test)
-
-        # split into 3 folder
-        _fill_file(images, ntpath.join(output_dir, "train.txt"), train[0])
-        _fill_file(images, ntpath.join(output_dir, "valid.txt"), valid[0])
-        _fill_file(images, ntpath.join(output_dir, "test.txt"), test[0])
 
 
 def _fill_classes(
@@ -243,7 +215,7 @@ def _split_left_right(files: list[str]) -> tuple[list[str], list[str]]:
 
     for file in files:
 
-        basename = ntpath.basename(file)
+        basename = Path(file).stem
 
         is_left = LEFT_PATTERN in basename
         is_right = RIGHT_PATTERN in basename
@@ -260,6 +232,43 @@ def _split_left_right(files: list[str]) -> tuple[list[str], list[str]]:
         return
 
     return left, right
+
+
+def copy_images(csv: str, output_dir: str, output_csv: str):
+
+    # copy files into right or left folder
+    Path(output_dir).mkdir(exist_ok=True, parents=True)
+
+    left_path = Path(output_dir, "left")
+    right_path = Path(output_dir, "right")
+
+    Path(left_path).mkdir(exist_ok=True, parents=True)
+    Path(right_path).mkdir(exist_ok=True, parents=True)
+
+    df = pd.read_csv(csv)
+    df = df["SOURCES"]
+
+    with open(sources_file) as sources:
+
+        filenames = sources.readlines()
+        filenames = [s.strip() for s in filenames]
+
+        # split left and right
+        split = _split_left_right(filenames)
+
+        if split is None:
+            print(f"Failed to split {sources_file} into left and right")
+            return
+
+        left_files, right_files = split
+
+        dict_anonymize = _anonymize(filenames)
+
+        # copy files
+        _copy_anonymized_files(dict_anonymize, left_files, left_path)
+        _copy_anonymized_files(dict_anonymize, right_files, right_path)
+
+        # register into a csv
 
 
 def _anonymize(filenames: list[str]) -> dict[str, str]:
@@ -289,35 +298,40 @@ def _anonymize(filenames: list[str]) -> dict[str, str]:
     return res
 
 
-def split_dataset_images(sources_file: str, output_dir: str, output_csv: str):
+def split_dataset_source(
+    csv: str,
+    output_dir: str,
+    ratio_train=0.70,
+    ratio_valid=0.15,
+    ratio_test=0.15,
+    margin_train=0.05,
+    margin_test=0.02,
+):
 
-    # copy files into right or left folder
-    Path(output_dir).mkdir(exist_ok=True, parents=True)
+    if not Path(csv).exists():
+        return
 
-    left_path = ntpath.join(output_dir, "left")
-    right_path = ntpath.join(output_dir, "right")
+    df = pd.read_csv(csv)
 
-    Path(left_path).mkdir(exist_ok=True, parents=True)
-    Path(right_path).mkdir(exist_ok=True, parents=True)
+    with open(dataset, "r") as file:
+        images = file.readlines()
 
-    with open(sources_file) as sources:
+        hist = histogram_subject(images)
 
-        filenames = sources.readlines()
-        filenames = [s.strip() for s in filenames]
+        train, valid, test = _repeated_weighted_draw(
+            hist, ratio_train, ratio_test, margin_train, margin_test
+        )
 
-        # split left and right
-        split = _split_left_right(filenames)
+        _log_subject_eye(train, valid, test)
 
-        if split is None:
-            print(f"Failed to split {sources_file} into left and right")
-            return
+        # split into 3 folder
+        _fill_file(images, ntpath.join(output_dir, "train.txt"), train[0])
+        _fill_file(images, ntpath.join(output_dir, "valid.txt"), valid[0])
+        _fill_file(images, ntpath.join(output_dir, "test.txt"), test[0])
 
-        left_files, right_files = split
 
-        dict_anonymize = _anonymize(filenames)
+"""
+join_dataset("source/pngs.txt", "source/pngs2.txt", "source/classification_source_dataset.txt")
+split_dataset_source("source/classification_source_dataset.txt", "source/split/")
 
-        # copy files
-        _copy_anonymized_files(dict_anonymize, left_files, left_path)
-        _copy_anonymized_files(dict_anonymize, right_files, right_path)
-
-        # register into a csv
+"""

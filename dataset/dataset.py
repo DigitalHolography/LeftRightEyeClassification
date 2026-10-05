@@ -2,7 +2,8 @@ import shutil
 from pathlib import Path
 
 import pandas as pd
-from utils import list_to_csv, strip
+
+from .utils import list_to_csv, strip
 
 
 def join_txt_dataset(
@@ -33,7 +34,7 @@ def join_txt_dataset(
         for f in filters:
             res = list(filter(f, lst1))
 
-        list_to_csv(res, "SOURCES", output_csv)
+        return list_to_csv(res, "SOURCES", output_csv)
 
 
 def create_dataset(

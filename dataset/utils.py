@@ -1,5 +1,6 @@
 import _winapi
 import os
+import re
 from pathlib import Path
 
 import pandas as pd
@@ -17,7 +18,7 @@ def strip(str_: str):
     return str_.strip()
 
 
-def is_exist(file):
+def is_exist(file: str):
     return Path(file).exists()
 
 
@@ -44,6 +45,23 @@ def link_dir(target, link):
         return
 
     _winapi.CreateJunction(os.path.abspath(target), os.path.abspath(link))
+
+
+def extract_subject_name(file: str):
+    file = file.strip()
+
+    # from a path get the basename
+    filename = Path(file).stem
+
+    lst = filename.split("_")
+    if len(lst) == 0:
+        return
+
+    subject_id = lst[1]
+
+    # get the biggest substring of char
+    sequences = re.findall(r"\D+", subject_id)
+    return max(sequences, key=len, default="")
 
 
 def histogram_names(files: list[str]) -> dict:
