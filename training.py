@@ -33,23 +33,24 @@ def test(model, dataset_path: str):
     cm = metrics.confusion_matrix.matrix.T.astype(int)
     tp = np.diag(cm)
 
-    accuracy = tp / np.maximum(cm.sum(axis=0), 1)
+    accuracy = metrics.top1
+    precision = tp / np.maximum(cm.sum(axis=0), 1)
     recall = tp / np.maximum(cm.sum(axis=1), 1)
-    f1 = 2 * accuracy * recall / np.maximum(accuracy + recall, 1e-12)
+    f1 = 2 * precision * recall / np.maximum(precision + recall, 1e-12)
 
     names = [model.names[i] for i in range(len(model.names))]
 
     # Log
     for i, name in enumerate(names):
         print(
-            f"{name:>10} | accuracy {accuracy[i]:.3f} | recall {recall[i]:.3f} | F1 {f1[i]:.3f}"
+            f"{name:>10} | precision {precision[i]:.3f} | recall {recall[i]:.3f} | F1 {f1[i]:.3f}"
         )
 
     print(
-        f"{'macro':>10} | accuracy {accuracy.mean():.3f} | recall {recall.mean():.3f} | F1 {f1.mean():.3f}"
+        f"{'macro':>10} | precision {precision.mean():.3f} | recall {recall.mean():.3f} | F1 {f1.mean():.3f}"
     )
     print(f"Accuracy : {metrics.top1:.3f}")
 
     print("Confusion matrix :\n", cm)
 
-    return metrics
+    return metrics, [accuracy, precision.mean(), recall.mean(), f1.mean()]

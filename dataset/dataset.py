@@ -42,6 +42,7 @@ def create_dataset(
     output_dir: str,
     output_csv: str | None = None,
     quantity: float = 1.0,
+    random: bool = False,
 ) -> pd.DataFrame:
     """
     params:
@@ -65,7 +66,16 @@ def create_dataset(
     else:
         n_rows = int(quantity)
 
-    df = df.iloc[:n_rows]
+    if not random or quantity == 1:
+        df = df.iloc[:n_rows]
+    else:
+        left_df: pd.DataFrame = df.loc[df["SIDE"] == "L"]
+        right_df: pd.DataFrame = df.loc[df["SIDE"] == "R"]
+
+        left_df = left_df.sample(n_rows // 2)
+        right_df = right_df.sample(n_rows // 2)
+
+        df = pd.concat([left_df, right_df], ignore_index=True)
 
     left_path = output / "left"
     right_path = output / "right"
@@ -91,10 +101,7 @@ def create_dataset(
     _create_class(right_df, right_path)
 
     if quantity != 1.0 or output_csv is not None:
-        basename = filename.stem
-
-        output_csv = Path(output_csv, f"{basename}_{quantity}.csv")
-
+        Path(output_csv).parent.mkdir(parents=True, exist_ok=True)
         df.to_csv(output_csv)
 
     return df

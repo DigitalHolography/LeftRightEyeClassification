@@ -14,11 +14,13 @@ from ultralytics import YOLO
 def plot_kfold_report(
     histories,
     scores,
-    other_metrics,
     names: list[str],
     titre: str | None = None,
     show: bool = True,
 ):
+    """scores : une ligne par fold, une valeur par métrique (même ordre que names).
+    Les colonnes en trop sont ignorées."""
+
     curve_metrics = [
         ("train/loss", "Loss d'entraînement"),
         ("val/loss", "Loss de validation"),
@@ -35,9 +37,16 @@ def plot_kfold_report(
     all_df = pd.concat(dfs, ignore_index=True)
 
     # ---------- Données de la matrice ----------
-    n_folds = len(scores)
+    rows = [
+        list(r) if isinstance(r, (list, tuple, np.ndarray)) else [r] for r in scores
+    ]
+    n_folds = len(rows)
+    n_cols = min(min(len(r) for r in rows), len(names))
+    assert n_cols > 0, "scores et names doivent contenir au moins une métrique"
+    names = list(names)[:n_cols]
+
+    folds = np.array([[float(v) for v in r[:n_cols]] for r in rows])
     row_names = [f"Fold {i}" for i in range(n_folds)] + ["mean", "std"]
-    folds = np.column_stack([np.asarray(scores), np.asarray(other_metrics)])
     M = np.vstack([folds, folds.mean(axis=0), folds.std(axis=0)])
 
     # ---------- Grille ----------
@@ -66,16 +75,14 @@ def plot_kfold_report(
             )
 
         stats = all_df.groupby("epoch")[col].agg(["mean", "std"])
-        ax.plot(
-            stats.index, stats["mean"], color="black", linewidth=2.5, label="moyenne"
-        )
+        ax.plot(stats.index, stats["mean"], color="black", linewidth=2.5, label="mean")
         ax.fill_between(
             stats.index,
             stats["mean"] - stats["std"],
             stats["mean"] + stats["std"],
             color="gray",
             alpha=0.2,
-            label="± écart-type",
+            label="± std",
         )
 
         ax.set_title(title)
@@ -149,49 +156,148 @@ def _macro_scores(m):
     return p, r, f1
 
 
-def plot_metrics(results, model_names: list[str], ncols: int = 3):
-    """results     : liste d'objets renvoyés par model.val(), un par modèle
-    model_names : nom de chaque modèle (même ordre que results)"""
+def plot_metrics(
+    results,
+    model_names: list[str],
+    metric_names: list[str] = ("accuracy", "recall", "f1"),
+    metrics: list | None = None,
+    ncols: int = 3,
+    title: str | None = None,
+    show_band: bool = True,
+):
+    """Plot one subplot per entry of `metrics`, with mean ± std.
+
+    results      : list of rows, one per model; each row holds one cell per
+                   metric, in the order given by metric_names. A cell is:
+                   - (mean, std)  -> mean with standard deviation
+                   - mean         -> scalar, std treated as 0
+                   A row may also be an array of shape (n_metrics, 2).
+    model_names  : name of each model (same order as results)
+    metric_names : names of the columns of each row, in order
+    metrics      : list of entries, each one being:
+                   - "y_metric"            -> y_metric per model
+                   - ("y_metric", "x")     -> if x is a metric: y vs x scatter,
+                                              one point per model (means only);
+                                              otherwise: y_metric per model,
+                                              x used as the x-axis label
+                   None = every metric present in all rows, plotted per model
+    title        : optional global figure title
+    show_band    : per-model plots: shade the ±std band around the line
+    """
     assert len(results) == len(
         model_names
-    ), "results et model_names doivent avoir la même taille"
+    ), "results and model_names must have the same length"
 
-    metric_names = ["top1", "top5", "precision", "recall", "F1"]
-    M = np.array(
-        [[m.top1, m.top5, *_macro_scores(m)] for m in results]
-    )  # (modèles, métriques)
+    # ---- Normalize cells into (mean, std) ---------------------------------
+    def to_cell(c):
+        if isinstance(c, (list, tuple, np.ndarray)):
+            c = np.asarray(c, dtype=float).ravel()
+            assert c.size == 2, f"a cell must be a scalar or (mean, std), got {c}"
+            return float(c[0]), abs(float(c[1]))
+        return float(c), 0.0
 
-    n_metrics = len(metric_names)
-    ncols = min(ncols, n_metrics)
-    nrows = int(np.ceil(n_metrics / ncols))
+    def to_row(r):
+        if isinstance(r, np.ndarray) and r.ndim == 2:  # shape (n_metrics, 2)
+            return [to_cell(c) for c in r]
+        if isinstance(r, (list, tuple, np.ndarray)):
+            return [to_cell(c) for c in r]
+        return [to_cell(r)]  # single scalar metric
+
+    rows = [to_row(r) for r in results]
+    metric_names = list(metric_names)
+
+    # Columns available in every row
+    n_available = min(min(len(r) for r in rows), len(metric_names))
+    available = metric_names[:n_available]
+
+    def column(name):
+        """Return (means, stds) arrays for one metric across models."""
+        i = metric_names.index(name)
+        mean = np.array([r[i][0] for r in rows])
+        std = np.array([r[i][1] for r in rows])
+        return mean, std
+
+    def limits(mean, std):
+        lo, hi = (mean - std).min(), (mean + std).max()
+        margin = max(0.02, (hi - lo) * 0.3)
+        return lo - margin, min(1.02, hi + margin)
+
+    def fmt(m, s):
+        return f"{m:.4f}" if s == 0 else f"{m:.4f}\n± {s:.4f}"
+
+    # ---- Normalize metrics into (y, x) pairs ------------------------------
+    if metrics is None:
+        metrics = available
+    elif isinstance(metrics, (str, tuple)):
+        metrics = [metrics]
+    specs = [(m, None) if isinstance(m, str) else tuple(m) for m in metrics]
+
+    for y, x in specs:
+        assert (
+            y in available
+        ), f"metric '{y}' not available in every row (available: {available})"
+        if x in metric_names:
+            assert (
+                x in available
+            ), f"metric '{x}' not available in every row (available: {available})"
+
+    # ---- Figure -----------------------------------------------------------
+    n_plots = len(specs)
+    ncols = min(ncols, n_plots)
+    nrows = int(np.ceil(n_plots / ncols))
     fig, axes = plt.subplots(
         nrows, ncols, figsize=(5 * ncols, 4 * nrows), squeeze=False
     )
     axes = axes.ravel()
 
-    x = np.arange(len(model_names))
-    for j, (ax, name) in enumerate(zip(axes, metric_names)):
-        v = M[:, j]
-        ax.plot(x, v, marker="o", lw=2)
-        for xi, vi in zip(x, v):
-            ax.annotate(
-                f"{vi:.3f}",
-                (xi, vi),
-                textcoords="offset points",
-                xytext=(0, 7),
-                ha="center",
-                fontsize=9,
-            )
-        ax.set_title(name)
-        ax.set_xticks(x, labels=model_names, rotation=30, ha="right")
-        marge = max(0.02, (v.max() - v.min()) * 0.3)
-        ax.set_ylim(v.min() - marge, min(1.02, v.max() + marge))
+    idx = np.arange(len(model_names))
+    for ax, (y, x) in zip(axes, specs):
+        ym, ys = column(y)
+
+        if x in available:
+            # Metric vs metric: one point per model (means only)
+            xm, _ = column(x)
+            ys = np.zeros_like(ym)  # std not shown here
+            ax.scatter(xm, ym, s=50, zorder=3)
+            for name, xi, yi in zip(model_names, xm, ym):
+                ax.annotate(
+                    name,
+                    (xi, yi),
+                    textcoords="offset points",
+                    xytext=(0, 7),
+                    ha="center",
+                    fontsize=9,
+                )
+            ax.set_xlim(*limits(xm, np.zeros_like(xm)))
+            ax.set_xlabel(f"{x} (mean)")
+        else:
+            # Metric per model: line + error bars (+ optional band)
+            ax.errorbar(idx, ym, yerr=ys, marker="o", lw=2, capsize=4, zorder=3)
+            if show_band and ys.any():
+                ax.fill_between(idx, ym - ys, ym + ys, alpha=0.15, zorder=2)
+            for xi, yi, si in zip(idx, ym, ys):
+                ax.annotate(
+                    fmt(yi, si),
+                    (xi, yi + si),
+                    textcoords="offset points",
+                    xytext=(0, 5),
+                    ha="center",
+                    fontsize=8,
+                )
+            ax.set_xticks(idx, labels=model_names, rotation=30, ha="right")
+            ax.set_xlim(-0.5, len(idx) - 0.5)  # room for edge annotations
+            if x:
+                ax.set_xlabel(x)
+
+        ax.set_ylabel(f"{y} (mean ± std)" if ys.any() else f"{y} (mean)")
+        ax.set_ylim(*limits(ym, ys))
         ax.grid(alpha=0.3)
 
-    for ax in axes[n_metrics:]:  # cache les cases vides de la grille
+    for ax in axes[n_plots:]:  # hide empty grid cells
         ax.set_visible(False)
 
-    fig.suptitle("Comparaison des modèles", fontsize=14)
+    if title:
+        fig.suptitle(title, fontsize=14)
     fig.tight_layout()
     plt.show()
 
