@@ -320,9 +320,11 @@ def plot_LayerCAM(model: YOLO, data: str, class_name: str):
             print(f"Failed to predict {path}")
             continue
 
+        """
         # skip wrong result
         if model.names[r.probs.top1] != class_name:
             continue
+        """
 
         lst.append(np.asarray(Image.open(path)))
 
