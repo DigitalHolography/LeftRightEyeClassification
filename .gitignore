@@ -3,6 +3,7 @@ states/
 data/
 .idea/
 datasets/
+dataset/
 runs/
 models/
 splits_out/
