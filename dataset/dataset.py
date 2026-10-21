@@ -37,7 +37,7 @@ def _get_numbers_rows(df: pd.DataFrame, quantity: int, is_subject_level: bool) -
         return n_rows
 
     n_rows = int(quantity)
-    assert is_subject_level and quantity % 2 == 1
+    assert is_subject_level and quantity % 2 == 0
 
     return n_rows
 
@@ -170,16 +170,17 @@ def join_txt_dataset(
         return list_to_csv(res, "SOURCES", output_csv)
 
 
-def split_dataset(
-    dataset: str | pd.DataFrame,
-    repartition: list[int],
+def _generate_subdataset(
+    dataset: pd.DataFrame | str,
+    sizes: np.ndarray,
     random: bool = False,
-):
+    is_linked: bool = False,
+) -> list[pd.DataFrame]:
     """
     Don't split at subject level it's the responsability of the user
     """
 
-    repartition: np.ndarray = np.asarray(repartition)
+    repartition: np.ndarray = sizes
     df = _get_dataframe(dataset)
     res = []
     rng = np.random.default_rng()
@@ -200,7 +201,12 @@ def split_dataset(
     end = 0
     for size in repartition:
         end += size
-        indexes = draws[start:end]
+
+        if not is_linked:
+            indexes = draws[start:end]
+        else:
+            indexes = draws[:end]
+
         start = end
 
         left = left_df.iloc[indexes]
@@ -210,3 +216,22 @@ def split_dataset(
         res.append(L)
 
     return res
+
+
+def split_dataset(
+    dataset: str | pd.DataFrame,
+    subject_repartition: list[int],
+    random: bool = False,
+):
+    return _generate_subdataset(dataset, subject_repartition, random, is_linked=False)
+
+
+def generate_increasing_datasets(
+    dataset: str | pd.DataFrame, sizes: list[int], random: bool = False
+):
+    return _generate_subdataset(dataset, sizes, random, is_linked=True)
+
+
+def join_dataset(*dataframes: list[pd.DataFrame | str]) -> pd.DataFrame:
+    dataframes = [_get_dataframe(df) for df in dataframes]
+    return pd.concat(dataframes)
