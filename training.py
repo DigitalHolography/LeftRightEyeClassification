@@ -19,6 +19,7 @@ def train(model_name: str, dataset_path: str, config: dict):
         verbose=False,
         fliplr=0.0,
         val=False,
+        patience=0,
     )
 
     return model

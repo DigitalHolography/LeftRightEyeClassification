@@ -9,6 +9,9 @@ from .utils import list_to_csv, strip
 
 def _create_class(df, output: Path, side_folder: str, side_tag: str):
     side_path = output / side_folder
+    # remove the images of a previous generation
+    if side_path.exists():
+        shutil.rmtree(side_path)
     side_path.mkdir(parents=True, exist_ok=True)
     class_df: pd.DataFrame = df.loc[df["SIDE"] == side_tag]
 
@@ -118,11 +121,11 @@ def create_dataset(
     _create_class(sub_df, output, "left", "L")
     _create_class(sub_df, output, "right", "R")
 
-    if quantity != 1.0 or output_csv is not None:
+    if output_csv is not None:
         Path(output_csv).parent.mkdir(parents=True, exist_ok=True)
-        df.to_csv(output_csv)
+        sub_df.to_csv(output_csv, index=False)
 
-    return df
+    return sub_df
 
 
 def anonymize_dataset(csv: str) -> list:
@@ -170,6 +173,50 @@ def join_txt_dataset(
         return list_to_csv(res, "SOURCES", output_csv)
 
 
+def _subjects(df: pd.DataFrame) -> np.ndarray:
+    """
+    List the subjects (PATIENT) of the dataframe, keep the csv order
+    Check that each subject has exactly 1 Left and 1 Right
+    """
+    counts = df.groupby("PATIENT")["SIDE"].agg(lambda s: "".join(sorted(s)))
+    invalid = counts[counts != "LR"]
+    assert invalid.empty, f"subjects without exactly 1 L and 1 R: {invalid.to_dict()}"
+
+    return df["PATIENT"].drop_duplicates().to_numpy()
+
+
+def _select_subjects(df: pd.DataFrame, subjects) -> pd.DataFrame:
+    sub_df = df[df["PATIENT"].isin(subjects)]
+    # L first then R, like in _get_subdataset
+    return pd.concat(
+        [sub_df.loc[sub_df["SIDE"] == "L"], sub_df.loc[sub_df["SIDE"] == "R"]],
+        ignore_index=True,
+    )
+
+
+def check_no_collision(*dataframes: pd.DataFrame):
+    """
+    Assert that no subject and no image are shared between the dataframes
+    """
+    seen_patients: set = set()
+    seen_sources: set = set()
+
+    for i, df in enumerate(dataframes):
+        patients = set(df["PATIENT"])
+        sources = set(df["SOURCE"])
+
+        assert not df["SOURCE"].duplicated().any(), f"duplicated image in df {i}"
+        assert not (
+            patients & seen_patients
+        ), f"subject collision in df {i}: {patients & seen_patients}"
+        assert not (
+            sources & seen_sources
+        ), f"image collision in df {i}: {sources & seen_sources}"
+
+        seen_patients |= patients
+        seen_sources |= sources
+
+
 def _generate_subdataset(
     dataset: pd.DataFrame | str,
     sizes: np.ndarray,
@@ -177,43 +224,43 @@ def _generate_subdataset(
     is_linked: bool = False,
 ) -> list[pd.DataFrame]:
     """
-    Don't split at subject level it's the responsability of the user
+    sizes are in number of images (2 images per subject, so must be even)
+    The draws are done at subject level (a subject is never split)
+    - not linked: disjoint subdatasets, sum(sizes) <= dataset size
+    - linked: nested subdatasets (each one contains the previous),
+    max(sizes) <= dataset size
     """
 
-    repartition: np.ndarray = sizes
+    sizes = np.asarray(sizes, dtype=int)
+    assert (sizes % 2 == 0).all(), f"sizes must be even: {sizes}"
+
     df = _get_dataframe(dataset)
+    subjects = _subjects(df)
+    n_subjects_needed = sizes.max() if is_linked else sizes.sum()
+    assert (
+        n_subjects_needed // 2 <= subjects.size
+    ), f"need {n_subjects_needed} images but the dataset has {subjects.size * 2}"
+
+    if random:
+        subjects = np.random.default_rng().permutation(subjects)
+
     res = []
-    rng = np.random.default_rng()
-
-    total = repartition.sum()
-
-    assert df.shape[0] <= total * 2
-
-    left_df: pd.DataFrame = df.loc[df["SIDE"] == "L"]
-    right_df: pd.DataFrame = df.loc[df["SIDE"] == "R"]
-
-    if not random:
-        draws = list(range(total))
-    else:
-        draws = rng.choice(np.arange(total), size=total, replace=False).tolist()
-
     start = 0
-    end = 0
-    for size in repartition:
-        end += size
+    for size in sizes:
+        n_subject = size // 2
 
-        if not is_linked:
-            indexes = draws[start:end]
+        if is_linked:
+            draws = subjects[:n_subject]
         else:
-            indexes = draws[:end]
+            draws = subjects[start : start + n_subject]
+            start += n_subject
 
-        start = end
+        sub_df = _select_subjects(df, draws)
+        assert sub_df.shape[0] == size
+        res.append(sub_df)
 
-        left = left_df.iloc[indexes]
-        right = right_df.iloc[indexes]
-
-        L = pd.concat([left, right], ignore_index=True)
-        res.append(L)
+    if not is_linked:
+        check_no_collision(*res)
 
     return res
 
@@ -233,5 +280,5 @@ def generate_increasing_datasets(
 
 
 def join_dataset(*dataframes: list[pd.DataFrame | str]) -> pd.DataFrame:
-    dataframes = [_get_dataframe(df) for df in dataframes]
-    return pd.concat(dataframes)
+    dataframes = [_get_dataframe(df).copy() for df in dataframes]
+    return pd.concat(dataframes, ignore_index=True)
