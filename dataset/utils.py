@@ -64,6 +64,20 @@ def extract_subject_name(file: str):
     return max(sequences, key=len, default="")
 
 
+def extract_eye_laterality(file: str) -> str:
+
+    LEFT_PATTERN = "_L_"
+    RIGHT_PATTERN = "_R_"
+
+    if LEFT_PATTERN in file:
+        return "L"
+
+    if RIGHT_PATTERN in file:
+        return "R"
+
+    return None
+
+
 def histogram_names(files: list[str]) -> dict:
     """
     Do an histogram of name with the name in key and the number of eye with this name

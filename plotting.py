@@ -4,9 +4,11 @@ import io
 import numbers
 from pathlib import Path
 
+import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from IPython.display import display
 from matplotlib.ticker import MaxNLocator
 from PIL import Image
 from sklearn.metrics import precision_recall_fscore_support
@@ -194,6 +196,7 @@ def plot_metrics(
     show_points  : per-model plots: if False, draw only the line (+ band),
                    without markers, error bars or value labels
     """
+
     assert len(results) == len(
         model_names
     ), "results and model_names must have the same length"
@@ -233,7 +236,7 @@ def plot_metrics(
         return lo - margin, min(1.02, hi + margin)
 
     def fmt(m, s):
-        return f"{m:.2f}" if s == 0 else f"{m:.2f}\n± {s:.2f}"
+        return f"{m:.4f}" if s == 0 else f"{m:.4f}\n± {s:.4f}"
 
     # ---- Numeric model names -> real x positions --------------------------
     numeric_x = all(
@@ -273,6 +276,8 @@ def plot_metrics(
     )
     axes = axes.ravel()
 
+    fit_jobs = []  # (ax, numeric_ticks, value_annotations) to de-overlap later
+
     for ax, (y, x) in zip(axes, specs):
         ym, ys = column(y)
 
@@ -301,8 +306,9 @@ def plot_metrics(
                 ax.plot(xs, my, lw=2, zorder=3)
             if show_band and sy.any():
                 ax.fill_between(xs, my - sy, my + sy, alpha=0.15, zorder=2)
+            anns = []
             for xi, yi, si in zip(xs, my, sy) if show_points else []:
-                ax.annotate(
+                ann = ax.annotate(
                     fmt(yi, si),
                     (xi, yi + si),
                     textcoords="offset points",
@@ -310,13 +316,20 @@ def plot_metrics(
                     ha="center",
                     fontsize=8,
                 )
+                anns.append(ann)
+            fit_jobs.append((ax, numeric_x, anns))
 
             if numeric_x:
                 # Real numeric axis: automatic ticks, up to the max value
                 span = xs.max() - xs.min()
                 pad = 0.05 * span if span > 0 else 0.5
                 ax.set_xlim(xs.min() - pad, xs.max() + pad)
+                # Labels: regular graduations (tens, ...) chosen automatically
                 ax.xaxis.set_major_locator(MaxNLocator(integer=all_int))
+                # Vertical grid: one line per data point (minor ticks, no label)
+                ax.set_xticks(np.unique(xs), minor=True)
+                ax.grid(axis="x", which="minor", alpha=0.3)
+                ax.grid(axis="y", which="major", alpha=0.3)
             else:
                 ax.set_xticks(
                     xs, labels=[model_names[i] for i in order], rotation=30, ha="right"
@@ -327,7 +340,8 @@ def plot_metrics(
 
         ax.set_ylabel(f"{y} (mean ± std)" if ys.any() else f"{y} (mean)")
         ax.set_ylim(*limits(ym, ys))
-        ax.grid(alpha=0.3)
+        if not (numeric_x and x not in available):  # numeric grid set above
+            ax.grid(alpha=0.3)
 
     for ax in axes[n_plots:]:  # hide empty grid cells
         ax.set_visible(False)
@@ -335,6 +349,49 @@ def plot_metrics(
     if title:
         fig.suptitle(title, fontsize=14)
     fig.tight_layout()
+
+    # ---- Avoid overlapping text -------------------------------------------
+    if fit_jobs:
+        fig.canvas.draw()  # place every text so its real size is known
+        renderer = fig.canvas.get_renderer()
+        gap = 6 * fig.dpi / 72  # min horizontal space between two texts (6 pt)
+
+        def overlaps(texts):
+            boxes = [t.get_window_extent(renderer) for t in texts]
+            return any(a.x1 + gap > b.x0 for a, b in zip(boxes[:-1], boxes[1:]))
+
+        def assign_rows(texts):
+            # Greedy: put each text on the first row where it fits
+            rows_end, rows = [], []
+            for t in texts:
+                b = t.get_window_extent(renderer)
+                for r, end in enumerate(rows_end):
+                    if end + gap <= b.x0:
+                        rows_end[r] = b.x1
+                        rows.append(r)
+                        break
+                else:
+                    rows_end.append(b.x1)
+                    rows.append(len(rows_end) - 1)
+            return rows
+
+        def shrink(texts, sizes):
+            # Try decreasing font sizes; return True if one fits on one row
+            for size in sizes:
+                for t in texts:
+                    t.set_fontsize(size)
+                if not overlaps(texts):
+                    return True
+            return False
+
+        for ax, numeric, anns in fit_jobs:
+            # Value labels above points: shrink, then stagger vertically
+            if len(anns) > 1 and not shrink(anns, [8, 7, 6]):
+                step = 2.4 * anns[0].get_fontsize() + 2  # two text lines
+                for a, r in zip(anns, assign_rows(anns)):
+                    a.xyann = (0, 5 + r * step)
+
+        fig.tight_layout()
 
     if savename is not None:
         fig.savefig(savename, format="eps", bbox_inches="tight")
@@ -351,7 +408,7 @@ def plot_LayerCAM(model: YOLO, data: str, class_name: str):
 
     for img in Path(data).iterdir():
         name = f"{Path(img).stem}_cam.jpg"
-        r = model.predict(
+        _ = model.predict(
             img, name=predict_folder, verbose=False, visualize=True, exist_ok=True
         )[0]
 
@@ -382,3 +439,67 @@ def plot_LayerCAM(model: YOLO, data: str, class_name: str):
 
     plt.tight_layout()
     plt.show()
+
+
+def plot_LayerCAM_image(model, image, ground_truth: str):
+
+    predict_folder = Path(image).stem
+    path_prediction = Path("runs", "classify", predict_folder)
+
+    name = f"{Path(image).stem}_cam.jpg"
+    r = model.predict(
+        image, name=predict_folder, verbose=False, visualize=True, exist_ok=True
+    )[0]
+
+    path = Path(path_prediction, name)
+    if not path.exists():
+        print(f"Failed to predict {path}")
+        return
+
+    """
+    # skip wrong result
+    if model.names[r.probs.top1] != ground_truth:
+        print(f"Failed to predict {path}, wrong prediction")
+        return
+    """
+
+    image = np.asarray(Image.open(path))
+
+    label_idx = r.probs.top1
+    label = r.names[label_idx]
+    confidence = float(r.probs.top1conf)
+
+    # Choose color based on label
+    if label.lower() == "left":
+        color = (255, 0, 0)  # Red
+    elif label.lower() == "right":
+        color = (0, 255, 0)  # Green
+    else:
+        color = (255, 255, 0)  # Yellow
+
+    # Draw border inside the image array
+    border_thickness = 10
+    img_with_border = cv2.copyMakeBorder(
+        image,
+        border_thickness,
+        border_thickness,
+        border_thickness,
+        border_thickness,
+        cv2.BORDER_CONSTANT,
+        value=color,
+    )
+
+    # Add text label
+    label_text = f"{label.upper()} ({confidence:.2f})"
+    cv2.putText(
+        img_with_border,
+        label_text,
+        (25, 50),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        1,
+        (255, 255, 255),
+        1,
+        cv2.LINE_AA,
+    )
+
+    display(Image.fromarray(img_with_border))

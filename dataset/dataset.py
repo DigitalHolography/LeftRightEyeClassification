@@ -3,8 +3,13 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from PIL import Image
 
-from .utils import list_to_csv, strip
+from utils import bilinear_resize, txt_to_list
+
+from .utils import extract_eye_laterality, extract_subject_name, list_to_csv, strip
+
+""" ------------------------------------------- """
 
 
 def _create_class(df, output: Path, side_folder: str, side_tag: str):
@@ -128,49 +133,7 @@ def create_dataset(
     return sub_df
 
 
-def anonymize_dataset(csv: str) -> list:
-    """
-    Add or modify the name's col
-    """
-
-    df = pd.read_csv(csv)
-    nb_lines = df.shape[0]
-
-    df["NAME"] = ""
-    df["NAME"] = [f"{i:04d}.png" for i in range(nb_lines)]
-
-    df.to_csv(csv, index=False)
-
-
-def join_txt_dataset(
-    dataset1_file: str, dataset2_file: str, output_csv: str, filters: list
-):
-    """
-    Join txt to create a dataset (csv file), possible to add filters apply to the
-    join dataset
-
-    """
-
-    if not Path(dataset1_file).exists() or not Path(dataset2_file).exists():
-        return
-
-    with open(dataset1_file, "r") as file1, open(dataset2_file, "r") as file2:
-
-        lst1 = map(strip, file1.readlines())
-        lst2 = map(strip, file2.readlines())
-
-        # remove duplicate element
-        s1 = set(lst1)
-        s2 = set(lst2)
-        mult_set = s1 | s2
-
-        res = sorted(mult_set)
-
-        # filter on the dataset the keep only interesting files
-        for f in filters:
-            res = list(filter(f, lst1))
-
-        return list_to_csv(res, "SOURCES", output_csv)
+""" ------------------------------------------- """
 
 
 def _subjects(df: pd.DataFrame) -> np.ndarray:
@@ -279,6 +242,136 @@ def generate_increasing_datasets(
     return _generate_subdataset(dataset, sizes, random, is_linked=True)
 
 
+""" ------------------------------------------- """
+
+
 def join_dataset(*dataframes: list[pd.DataFrame | str]) -> pd.DataFrame:
     dataframes = [_get_dataframe(df).copy() for df in dataframes]
     return pd.concat(dataframes, ignore_index=True)
+
+
+def source_to_dataframe(input: list[str]) -> pd.DataFrame:
+    """
+    From a list of sources build a dataframe with {sources, patient, side}
+    The basename should contain all information required
+    params:
+        input: Is a list with all sources
+    """
+    data = {"SOURCE": [], "PATIENT": [], "TYPE": [], "SIDE": [], "PATHO": []}
+    for source in input:
+        patient: str = extract_subject_name(source)
+        side: str = extract_eye_laterality(source)
+
+        if side == None or patient == None:
+            continue
+
+        data["SOURCE"].append(source.strip())
+        data["PATIENT"].append(patient)
+        data["TYPE"].append("retinal seg")
+        data["SIDE"].append(side)
+        data["PATHO"].append(None)
+
+    return pd.DataFrame(data=data)
+
+
+def anonymize_dataset(csv: str) -> list:
+    """
+    Add or modify the name's col
+    """
+
+    df = pd.read_csv(csv)
+    nb_lines = df.shape[0]
+
+    df["NAME"] = ""
+    df["NAME"] = [f"{i:04d}.png" for i in range(nb_lines)]
+
+    df.to_csv(csv, index=False)
+
+
+def join_txt_dataset(
+    dataset1_file: str, dataset2_file: str, output_csv: str, filters: list
+):
+    """
+    Join txt to create a dataset (csv file), possible to add filters apply to the
+    join dataset
+
+    """
+
+    if not Path(dataset1_file).exists() or not Path(dataset2_file).exists():
+        return
+
+    with open(dataset1_file, "r") as file1, open(dataset2_file, "r") as file2:
+
+        lst1 = map(strip, file1.readlines())
+        lst2 = map(strip, file2.readlines())
+
+        # remove duplicate element
+        s1 = set(lst1)
+        s2 = set(lst2)
+        mult_set = s1 | s2
+
+        res = sorted(mult_set)
+
+        # filter on the dataset the keep only interesting files
+        for f in filters:
+            res = list(filter(f, lst1))
+
+        return list_to_csv(res, "SOURCES", output_csv)
+
+
+def create_retinal_segmentation_testset(
+    input: str, train_csv: str, output_dir: str, output_csv: str
+) -> pd.DataFrame:
+    """
+    !!! This function is specific to this experiment !!!
+    - get all patient not in the train_csv
+    - do bilineare resize
+    - concat artery and vein segmentation
+    - save all in output folder
+    """
+    df_input: pd.DataFrame = source_to_dataframe(txt_to_list(input))
+    df_train: pd.DataFrame = pd.read_csv(train_csv)
+
+    df_input["NAME"] = [f"{i:04d}.png" for i in range(df_input.shape[0])]
+
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    Path(output_csv).parent.mkdir(parents=True, exist_ok=True)
+
+    # pathes
+    seg_ground_truth = "ground_truths"
+    vein_mask_name = "retina_vein_mask.png"
+    artery_mask_name = "retina_artery_mask.png"
+
+    # filter
+    mask = df_input["PATIENT"].isin(df_train["PATIENT"])
+    df = df_input[~mask]
+    df.to_csv(output_csv, index=False)
+
+    for _, row in df.iterrows():
+
+        # concat two bilineare resizes images
+        source = row["SOURCE"].strip('"')
+        name = row["NAME"]
+
+        folder = Path(source).stem
+        parent = Path(source).parent
+        seg_path = Path(parent, folder) / seg_ground_truth
+
+        vein_path = seg_path / vein_mask_name
+        artery_path = seg_path / artery_mask_name
+
+        if not vein_path.exists() or not artery_path.exists():
+            print(f"Failed to find segmentation: {vein_path} or {artery_path}")
+            continue
+
+        vein = np.asarray(Image.open(vein_path).convert("L"))
+        artery = np.asarray(Image.open(artery_path).convert("L"))
+        seg = np.maximum(vein, artery)
+        resize_seg = bilinear_resize(seg, 512, 512)
+
+        # save
+        Image.fromarray(np.clip(resize_seg, 0, 255).astype(np.uint8)).save(
+            Path(output_dir) / name
+        )
+
+    return df
