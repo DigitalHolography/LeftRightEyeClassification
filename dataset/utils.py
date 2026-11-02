@@ -1,4 +1,3 @@
-import _winapi
 import os
 import re
 from pathlib import Path
@@ -41,11 +40,14 @@ def text_to_csv(txt: str, col_name: str, output_csv: str):
 
 
 def link_dir(target, link):
-    if Path(link).exists():
+    target = os.path.abspath(target)
+    link = os.path.abspath(link)
+
+    # Détecte aussi les liens cassés
+    if os.path.lexists(link):
         return
 
-    _winapi.CreateJunction(os.path.abspath(target), os.path.abspath(link))
-
+    os.symlink(target, link, target_is_directory=True)
 
 def extract_subject_name(file: str):
     file = file.strip()
