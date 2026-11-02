@@ -3,6 +3,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from sklearn.metrics import precision_recall_fscore_support
 from ultralytics import YOLO
 
 
@@ -21,9 +22,9 @@ def train(model_name: str, dataset_path: str, config: dict):
         device=0,  # GPU
         optimizer=config["optimizer"],
         verbose=False,
-        fliplr=0.0,
         val=False,
         patience=0,
+        fliplr=0.0,
     )
 
     return model
@@ -120,3 +121,54 @@ def predict_segmentations_folder(model: YOLO, input_dir: str, csv: str):
     print(
         f"{(right_true + left_true) / (right_false + right_true + left_false + left_true) }"
     )
+
+
+def kfold_cross_validation(n: int, dataset: str, config: dict):
+    dataset = Path(dataset)
+    histories = []
+    metrics = []
+
+    for i in range(n):
+
+        model = YOLO(config["model"])
+
+        fold_path = dataset / f"fold_{i}"
+        model_path = f"fold_{i}"
+
+        model.train(
+            data=fold_path,
+            project="train/",
+            name=model_path,
+            exist_ok=True,
+            epochs=config["epochs"],
+            imgsz=config["imgsz"],
+            batch=config["batch"],
+            device=0,  # GPU
+            optimizer=config["optimizer"],
+            verbose=False,
+            fliplr=0,
+        )
+
+        path = Path("runs", "classify", "train") / model_path
+        df = pd.read_csv(path / "results.csv")
+        df.columns = df.columns.str.strip()
+        histories.append(df)
+        last_model = YOLO(str(model.trainer.last))
+
+        metric = last_model.val(name=f"fold_{i}")
+
+        # get accuracy recal and F1 scores
+        cm = metric.confusion_matrix.matrix.T.astype(int)
+        n = len(last_model.names)
+        names = [last_model.names[i] for i in range(n)]
+
+        idx = np.arange(len(names))
+        y_true = np.repeat(idx, cm.sum(axis=1))
+        y_pred = np.concatenate([np.repeat(idx, row) for row in cm])
+
+        p, r, f1, _ = precision_recall_fscore_support(
+            y_true, y_pred, average="macro", zero_division=0
+        )
+        metrics.append((metric.top1, p, r, f1))
+
+    return histories, metrics

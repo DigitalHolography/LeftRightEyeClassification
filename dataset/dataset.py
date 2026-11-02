@@ -319,6 +319,19 @@ def join_txt_dataset(
         return list_to_csv(res, "SOURCES", output_csv)
 
 
+""" -------------------------------------------------- """
+
+
+def _get_moment0ff_path(holo: str):
+    "X:\250117\250117_ATM0044_L\250117_ATM0044_L_HD\png\moment0ff.png"
+
+    holo: Path = Path(holo)
+    basename: str = holo.stem
+    hd_path: Path = holo.parent / basename / f"{basename}_HD"
+
+    return str(hd_path / "png/moment0ff.png")
+
+
 def create_retinal_segmentation_testset(
     input: str, train_csv: str, output_dir: str, output_csv: str
 ) -> pd.DataFrame:
@@ -329,6 +342,7 @@ def create_retinal_segmentation_testset(
     - concat artery and vein segmentation
     - save all in output folder
     """
+
     df_input: pd.DataFrame = source_to_dataframe(txt_to_list(input))
     df_train: pd.DataFrame = pd.read_csv(train_csv)
 
@@ -366,12 +380,19 @@ def create_retinal_segmentation_testset(
 
         vein = np.asarray(Image.open(vein_path).convert("L"))
         artery = np.asarray(Image.open(artery_path).convert("L"))
-        seg = np.maximum(vein, artery)
-        resize_seg = bilinear_resize(seg, 512, 512)
+        seg_mask = np.maximum(vein, artery)
+        resize_seg_mask = bilinear_resize(seg_mask, 512, 512)
+
+        # get the segmentation (with the mask)
+        moment0ff_path = _get_moment0ff_path(source)
+        moment0ff = np.asarray(Image.open(moment0ff_path).convert("L"))
+
+        assert moment0ff.shape == mask.shape, f"{moment0ff.shape} vs {mask.shape}"
+
+        mask = resize_seg_mask > 0
+        image = np.where(mask, moment0ff, 0)
 
         # save
-        Image.fromarray(np.clip(resize_seg, 0, 255).astype(np.uint8)).save(
-            Path(output_dir) / name
-        )
+        Image.fromarray(image.astype(np.uint8)).save(Path(output_dir) / name)
 
     return df
