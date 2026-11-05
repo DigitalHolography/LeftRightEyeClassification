@@ -1,19 +1,19 @@
 import shutil
+from collections.abc import Sequence
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from PIL import Image
 
-from utils import bilinear_resize, txt_to_list
-
-from .utils import extract_eye_laterality, extract_subject_name, list_to_csv, strip
+from libs.utils import extract_eye_laterality, extract_subject_name, list_to_csv, strip, bilinear_resize, txt_to_list, find_root_repository
 
 """ ------------------------------------------- """
 
 
-def _create_class(df, output: Path, side_folder: str, side_tag: str):
+def _create_class(df, output: Path, side_folder: str, side_tag: str, source_col: str):
     side_path = output / side_folder
+
     # remove the images of a previous generation
     if side_path.exists():
         shutil.rmtree(side_path)
@@ -21,9 +21,14 @@ def _create_class(df, output: Path, side_folder: str, side_tag: str):
     class_df: pd.DataFrame = df.loc[df["SIDE"] == side_tag]
 
     for _, row in class_df.iterrows():
-        source = row["SOURCE"].strip('"')
-        name = row["NAME"].strip()
-        shutil.copy(source, side_path / name)
+        source = row[source_col].strip('"')
+
+        name = row["LOCAL_REF"].strip()
+        name = Path(name).name
+
+        name_path = side_path / name # absolute path
+        source_path = find_root_repository() / source
+        shutil.copy(source_path, name_path)
 
     return class_df
 
@@ -37,7 +42,7 @@ def _get_dataframe(input: str | pd.DataFrame) -> pd.DataFrame:
     return input
 
 
-def _get_numbers_rows(df: pd.DataFrame, quantity: int, is_subject_level: bool) -> int:
+def _get_numbers_rows(df: pd.DataFrame, quantity: float, is_subject_level: bool) -> int:
     n_rows = 0
     if quantity <= 1:
         n_rows = int(len(df) * quantity)
@@ -53,7 +58,7 @@ def _get_numbers_rows(df: pd.DataFrame, quantity: int, is_subject_level: bool) -
 def _get_subdataset(
     df: pd.DataFrame,
     n_rows: int,
-    quantity: int,
+    quantity: float,
     is_random: bool,
     is_subject_level: bool,
 ) -> pd.DataFrame:
@@ -98,6 +103,7 @@ def create_dataset(
     quantity: float = 1.0,
     is_random: bool = False,
     is_subject_level: bool = False,
+    source_col: str = "SOURCE"
 ) -> pd.DataFrame:
     """
     params:
@@ -109,6 +115,7 @@ def create_dataset(
     - random: Take random people in the dataset
     - subject: Considere a subject as an entity. Then all operation are done
     one the entity
+    - is_downloaded: take the csv and put all
 
     Informations:
         - assume that the csv is sorted by the subject name
@@ -123,8 +130,8 @@ def create_dataset(
     n_rows: int = _get_numbers_rows(df, quantity, is_subject_level)
     sub_df = _get_subdataset(df, n_rows, quantity, is_random, is_subject_level)
 
-    _create_class(sub_df, output, "left", "L")
-    _create_class(sub_df, output, "right", "R")
+    _create_class(sub_df, output, "left", "L", source_col)
+    _create_class(sub_df, output, "right", "R", source_col)
 
     if output_csv is not None:
         Path(output_csv).parent.mkdir(parents=True, exist_ok=True)
@@ -182,7 +189,7 @@ def check_no_collision(*dataframes: pd.DataFrame):
 
 def _generate_subdataset(
     dataset: pd.DataFrame | str,
-    sizes: np.ndarray,
+    sizes: Sequence[int] | np.ndarray,
     random: bool = False,
     is_linked: bool = False,
 ) -> list[pd.DataFrame]:
@@ -230,24 +237,23 @@ def _generate_subdataset(
 
 def split_dataset(
     dataset: str | pd.DataFrame,
-    subject_repartition: list[int],
+    subject_repartition: Sequence[int] | np.ndarray,
     random: bool = False,
 ):
     return _generate_subdataset(dataset, subject_repartition, random, is_linked=False)
 
 
 def generate_increasing_datasets(
-    dataset: str | pd.DataFrame, sizes: list[int], random: bool = False
+    dataset: str | pd.DataFrame, sizes: Sequence[int] | np.ndarray, random: bool = False
 ):
     return _generate_subdataset(dataset, sizes, random, is_linked=True)
 
 
 """ ------------------------------------------- """
 
-
-def join_dataset(*dataframes: list[pd.DataFrame | str]) -> pd.DataFrame:
-    dataframes = [_get_dataframe(df).copy() for df in dataframes]
-    return pd.concat(dataframes, ignore_index=True)
+def join_dataframe(*dataframes: pd.DataFrame | str) -> pd.DataFrame:
+    frames = [_get_dataframe(df).copy() for df in dataframes]
+    return pd.concat(frames, ignore_index=True)
 
 
 def source_to_dataframe(input: list[str]) -> pd.DataFrame:
@@ -259,8 +265,8 @@ def source_to_dataframe(input: list[str]) -> pd.DataFrame:
     """
     data = {"SOURCE": [], "PATIENT": [], "TYPE": [], "SIDE": [], "PATHO": []}
     for source in input:
-        patient: str = extract_subject_name(source)
-        side: str = extract_eye_laterality(source)
+        patient: str | None = extract_subject_name(source)
+        side: str | None = extract_eye_laterality(source)
 
         if side == None or patient == None:
             continue
@@ -274,7 +280,7 @@ def source_to_dataframe(input: list[str]) -> pd.DataFrame:
     return pd.DataFrame(data=data)
 
 
-def anonymize_dataset(csv: str) -> list:
+def anonymize_dataset(csv: str):
     """
     Add or modify the name's col
     """
@@ -282,8 +288,8 @@ def anonymize_dataset(csv: str) -> list:
     df = pd.read_csv(csv)
     nb_lines = df.shape[0]
 
-    df["NAME"] = ""
-    df["NAME"] = [f"{i:04d}.png" for i in range(nb_lines)]
+    df["LOCAL_REF"] = ""
+    df["LOCAL_REF"] = [f"{i:04d}.png" for i in range(nb_lines)]
 
     df.to_csv(csv, index=False)
 
@@ -323,11 +329,9 @@ def join_txt_dataset(
 
 
 def _get_moment0ff_path(holo: str):
-    "X:\250117\250117_ATM0044_L\250117_ATM0044_L_HD\png\moment0ff.png"
-
-    holo: Path = Path(holo)
-    basename: str = holo.stem
-    hd_path: Path = holo.parent / basename / f"{basename}_HD"
+    holo_path: Path = Path(holo)
+    basename: str = holo_path.stem
+    hd_path: Path = holo_path.parent / basename / f"{basename}_HD"
 
     return str(hd_path / "png/moment0ff.png")
 
@@ -346,7 +350,7 @@ def create_retinal_segmentation_testset(
     df_input: pd.DataFrame = source_to_dataframe(txt_to_list(input))
     df_train: pd.DataFrame = pd.read_csv(train_csv)
 
-    df_input["NAME"] = [f"{i:04d}.png" for i in range(df_input.shape[0])]
+    df_input["LOCAL_REF"] = [f"{i:04d}.png" for i in range(df_input.shape[0])]
 
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     Path(output_csv).parent.mkdir(parents=True, exist_ok=True)
@@ -365,7 +369,7 @@ def create_retinal_segmentation_testset(
 
         # concat two bilineare resizes images
         source = row["SOURCE"].strip('"')
-        name = row["NAME"]
+        name = row["LOCAL_REF"]
 
         folder = Path(source).stem
         parent = Path(source).parent
@@ -396,3 +400,22 @@ def create_retinal_segmentation_testset(
         Image.fromarray(image.astype(np.uint8)).save(Path(output_dir) / name)
 
     return df
+
+
+""" -------------------------------------------------- """
+
+def download_images(input: pd.DataFrame | str, output_dir: str):
+    """
+        Download from the source -> output_dir and change the local_ref to point on the
+        right local path.
+    """
+
+    df: pd.DataFrame = _get_dataframe(input)
+    output_dir_path: Path = Path(output_dir)
+
+    for index, row in df.iterrows():
+        source = row["SOURCE"].strip('"')
+        name = str(output_dir_path / row["LOCAL_REF"].strip())
+
+        df[index, "LOCAL_REF"] = name
+        shutil.copy(source, name)
