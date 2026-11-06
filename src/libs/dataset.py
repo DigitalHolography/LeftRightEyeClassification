@@ -10,7 +10,6 @@ from libs.utils import (
     bilinear_resize,
     extract_eye_laterality,
     extract_subject_name,
-    find_root_repository,
     list_to_csv,
     strip,
     txt_to_list,

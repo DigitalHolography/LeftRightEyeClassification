@@ -1,12 +1,12 @@
 import math
-
-import numpy as np
 import os
 import re
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
+import numpy as np
 import pandas as pd
+
 
 def bilinear_resize(image, height, width):
     """
@@ -53,6 +53,7 @@ def txt_to_list(input: str) -> list[str]:
 
     return lst
 
+
 def is_left_right_pattern(file):
     LEFT_PATTERN = "_L_"
     RIGHT_PATTERN = "_R_"
@@ -95,7 +96,17 @@ def link_dir(target, link):
     if os.path.lexists(link):
         return
 
-    os.symlink(target, link, target_is_directory=True)
+    os.makedirs(os.path.dirname(link), exist_ok=True)
+
+    try:
+        os.symlink(target, link, target_is_directory=True)
+    except OSError:
+        if os.name != "nt":
+            raise
+        import _winapi
+
+        _winapi.CreateJunction(target, link)
+
 
 def extract_subject_name(file: str) -> str | None:
     file = file.strip()
@@ -142,11 +153,13 @@ def histogram_names(files: list[str]) -> dict:
 
 
 def find_root_repository() -> Path:
-    ROOT = Path(subprocess.check_output(
-        ["git", "rev-parse", "--show-toplevel"],
-        cwd=Path(__file__).resolve().parent,
-        text=True,
-    ).strip())
+    ROOT = Path(
+        subprocess.check_output(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=Path(__file__).resolve().parent,
+            text=True,
+        ).strip()
+    )
 
     return Path(ROOT)
 
