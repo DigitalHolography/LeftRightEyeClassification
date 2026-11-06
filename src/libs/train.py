@@ -5,10 +5,16 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import precision_recall_fscore_support
 from ultralytics import YOLO
+
 from libs.utils import find_root_repository
 
 
-def train(model_name: str, dataset_path: str | Path, config: dict, project_name: str = "train/"):
+def train(
+    model_name: str,
+    dataset_path: str | Path,
+    config: dict,
+    project_name: str = "train/",
+):
     model = YOLO(config["model"])
 
     model.train(
@@ -26,7 +32,9 @@ def train(model_name: str, dataset_path: str | Path, config: dict, project_name:
         patience=0,
         fliplr=0.0,
         deterministic=True,
-        seed=42
+        seed=42,
+        amp=False,
+        workers=8,
     )
 
     return model

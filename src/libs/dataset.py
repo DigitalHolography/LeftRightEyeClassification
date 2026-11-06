@@ -6,7 +6,15 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 
-from libs.utils import extract_eye_laterality, extract_subject_name, list_to_csv, strip, bilinear_resize, txt_to_list, find_root_repository
+from libs.utils import (
+    bilinear_resize,
+    extract_eye_laterality,
+    extract_subject_name,
+    find_root_repository,
+    list_to_csv,
+    strip,
+    txt_to_list,
+)
 
 """ ------------------------------------------- """
 
@@ -26,9 +34,8 @@ def _create_class(df, output: Path, side_folder: str, side_tag: str, source_col:
         name = row["LOCAL_REF"].strip()
         name = Path(name).name
 
-        name_path = side_path / name # absolute path
-        source_path = find_root_repository() / source
-        shutil.copy(source_path, name_path)
+        name_path = side_path / name  # absolute path
+        shutil.copy(source, name_path)
 
     return class_df
 
@@ -103,7 +110,7 @@ def create_dataset(
     quantity: float = 1.0,
     is_random: bool = False,
     is_subject_level: bool = False,
-    source_col: str = "SOURCE"
+    source_col: str = "SOURCE",
 ) -> pd.DataFrame:
     """
     params:
@@ -250,6 +257,7 @@ def generate_increasing_datasets(
 
 
 """ ------------------------------------------- """
+
 
 def join_dataframe(*dataframes: pd.DataFrame | str) -> pd.DataFrame:
     frames = [_get_dataframe(df).copy() for df in dataframes]
@@ -404,10 +412,11 @@ def create_retinal_segmentation_testset(
 
 """ -------------------------------------------------- """
 
-def download_images(input: pd.DataFrame | str, output_dir: str):
+
+def download_images(input: str, output_dir: str):
     """
-        Download from the source -> output_dir and change the local_ref to point on the
-        right local path.
+    Download from the source -> output_dir and change the local_ref to point on the
+    right local path.
     """
 
     df: pd.DataFrame = _get_dataframe(input)
@@ -417,5 +426,10 @@ def download_images(input: pd.DataFrame | str, output_dir: str):
         source = row["SOURCE"].strip('"')
         name = str(output_dir_path / row["LOCAL_REF"].strip())
 
-        df[index, "LOCAL_REF"] = name
+        df.loc[index, "LOCAL_REF"] = name
+
+        Path(name).parent.mkdir(parents=True, exist_ok=True)
+
         shutil.copy(source, name)
+
+    df.to_csv(input, index=False)
