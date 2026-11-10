@@ -1,6 +1,7 @@
 import base64
 import html
 import io
+import math
 import numbers
 from pathlib import Path
 
@@ -804,7 +805,17 @@ def plot_LayerCAM_image(model, image, ground_truth: str):
 
     label_idx = r.probs.top1
     label = r.names[label_idx]
-    confidence = float(r.probs.top1conf)
+
+    # Extract label and confidence
+    if hasattr(r, "probs") and r.probs is not None:
+        probs = r.probs.data.cpu().numpy()
+        label_idx = np.argmax(probs)
+        label = r.names[label_idx]
+        confidence = probs[label_idx]
+    else:
+        # Fallback for different YOLO versions
+        label = "Unknown"
+        confidence = 0.0
 
     # Choose color based on label
     if label.lower() == "left":
@@ -827,7 +838,9 @@ def plot_LayerCAM_image(model, image, ground_truth: str):
     )
 
     # Add text label
-    label_text = f"{label.upper()} ({confidence:.2f})"
+
+    conf_trunc = math.floor(confidence * 100 + 1e-9) / 100
+    label_text = f"{label.upper()} ({conf_trunc:.2f})"
     cv2.putText(
         img_with_border,
         label_text,
