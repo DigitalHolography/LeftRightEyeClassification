@@ -1,6 +1,9 @@
+import math
 import os
 from pathlib import Path
 
+from PIL import Image
+import cv2
 import numpy as np
 import pandas as pd
 from sklearn.metrics import precision_recall_fscore_support
@@ -168,3 +171,90 @@ def kfold_cross_validation(n: int, dataset: str, config: dict):
         metrics.append((metric.top1, p, r, f1))
 
     return histories, metrics
+
+
+def layercam_load_folder(model: YOLO, input_folder: str, output_folder: str):
+
+    if (not Path(input_folder).exists()) or (not Path(input_folder).is_dir()):
+        raise ValueError(
+            f"Input folder {input_folder} does not exist or is not a directory."
+        )
+
+    Path(output_folder).mkdir(parents=True, exist_ok=True)
+
+    for image in os.listdir(input_folder):
+        if not image.lower().endswith((".png", ".jpg", ".jpeg")):
+            continue
+
+        image = find_root_repository() / Path(input_folder) / image
+        predict_folder = Path(image).stem
+        path_prediction = find_root_repository() / Path(
+            "runs", "classify", predict_folder
+        )
+
+        name = f"{Path(image).stem}_cam.jpg"
+        r = model.predict(
+            image, name=predict_folder, verbose=False, visualize=True, exist_ok=True
+        )[0]
+
+        path = Path(path_prediction, name)
+        if not path.exists():
+            print(f"Failed to predict {path}")
+            return
+
+        image = np.asarray(Image.open(path))
+
+        label_idx = r.probs.top1
+        label = r.names[label_idx]
+
+        # Extract label and confidence
+        if hasattr(r, "probs") and r.probs is not None:
+            probs = r.probs.data.cpu().numpy()
+            label_idx = np.argmax(probs)
+            label = r.names[label_idx]
+            confidence = probs[label_idx]
+        else:
+            # Fallback for different YOLO versions
+            label = "Unknown"
+            confidence = 0.0
+
+        # Choose color based on label
+        if label.lower() == "left":
+            color = (255, 0, 0)  # Red
+        elif label.lower() == "right":
+            color = (0, 255, 0)  # Green
+        else:
+            color = (255, 255, 0)  # Yellow
+
+        # Draw border inside the image array
+        border_thickness = 10
+        img_with_border = cv2.copyMakeBorder(
+            image,
+            border_thickness,
+            border_thickness,
+            border_thickness,
+            border_thickness,
+            cv2.BORDER_CONSTANT,
+            value=color,
+        )
+
+        # Add text label
+
+        conf_trunc = math.floor(confidence * 100 + 1e-9) / 100
+        label_text = f"{label.upper()} ({conf_trunc:.2f})"
+        cv2.putText(
+            img_with_border,
+            label_text,
+            (25, 50),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1,
+            (255, 255, 255),
+            1,
+            cv2.LINE_AA,
+        )
+
+        img_with_border = cv2.cvtColor(img_with_border, cv2.COLOR_RGB2BGR)
+
+        # save the image with border and label
+        output_path = Path(output_folder, name)
+        cv2.imwrite(str(output_path), img_with_border)
