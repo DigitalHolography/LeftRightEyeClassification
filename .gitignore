@@ -3,12 +3,16 @@ states/
 data/
 .idea/
 datasets/
+dataset/source
 runs/
 models/
+splits_out/
 new_images/
 same/
+csv/
 
 *.png
+*.cache
 
 *.pt
 *.onnx
